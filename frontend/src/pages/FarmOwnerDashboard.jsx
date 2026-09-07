@@ -69,16 +69,21 @@ export default function FarmOwnerDashboard() {
 
   return (
     <div className="flex flex-col flex-1 w-full space-y-8 animate-in slide-in-from-bottom-4 duration-500 relative overflow-y-auto pb-6">
-      <button 
-        onClick={() => setUser(null)}
-        className="absolute top-0 right-0 p-2 text-gray-400 hover:text-gray-600"
-      >
-        <LogOut className="w-5 h-5" />
-      </button>
-
-      <div className="space-y-2 mt-4">
-        <h2 className="text-2xl font-bold text-gray-800">Hi, {user.name}</h2>
-        <p className="text-gray-500 text-sm">Find help for tomorrow</p>
+      <div className="flex justify-between items-center mt-2">
+        <div>
+          <h2 className="text-2xl font-bold text-gray-800">Hi, {user.name}</h2>
+          <p className="text-gray-500 text-sm">Find help for tomorrow</p>
+        </div>
+        <button
+          onClick={() => {
+            const updated = { ...user, role: 'laborer' };
+            setUser(updated);
+            window.location.href = '/laborer';
+          }}
+          className="text-xs text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 px-3 py-1.5 rounded-xl font-medium transition-all"
+        >
+          Switch to Worker 👷
+        </button>
       </div>
 
       {loading && availableLaborers.length === 0 && hiredLaborers.length === 0 ? (

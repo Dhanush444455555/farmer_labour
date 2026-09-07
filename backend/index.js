@@ -2,7 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 const NodeCache = require('node-cache');
-const { initDb, query } = require('./db');
+const { connectDb } = require('./db');
+const User = require('./models/User');
+const Availability = require('./models/Availability');
 require('dotenv').config();
 
 const app = express();
@@ -12,8 +14,8 @@ app.use(express.json());
 // OTP store: expires after 5 minutes
 const otpCache = new NodeCache({ stdTTL: 300 });
 
-// Initialize Database on Startup
-initDb();
+// Connect to MongoDB Atlas
+connectDb();
 
 // Auth middleware - uses phone number as uid
 const requireAuth = (req, res, next) => {
@@ -94,44 +96,82 @@ app.post('/api/auth/verify-otp', async (req, res) => {
   // OTP valid — delete it so it can't be reused
   otpCache.del(cleanPhone);
 
-  // Create or fetch user using phone as uid
   try {
-    const result = await query('SELECT * FROM users WHERE uid = $1', [cleanPhone]);
-    if (result.rows.length > 0) {
-      return res.json(result.rows[0]);
+    let user = await User.findOne({ uid: cleanPhone });
+    if (!user) {
+      user = await User.create({ uid: cleanPhone, phone_number: cleanPhone });
     }
-    const newUser = await query(
-      'INSERT INTO users (uid, phone_number) VALUES ($1, $2) RETURNING *',
-      [cleanPhone, cleanPhone]
-    );
-    res.json(newUser.rows[0]);
+    res.json(user);
   } catch (err) {
-    console.error(err);
+    console.error('Verify OTP error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Direct phone login (no OTP)
+// Check if phone number exists in database
+app.post('/api/auth/check-number', async (req, res) => {
+  const { phone } = req.body;
+  if (!phone) return res.status(400).json({ error: 'Phone number required' });
+  const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+  try {
+    const user = await User.findOne({
+      $or: [{ uid: cleanPhone }, { phone_number: cleanPhone }]
+    });
+    res.json({ exists: !!user, name: user?.name || null, role: user?.role || null });
+  } catch (err) {
+    console.error('Check number error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Login: Only succeeds if the phone number already exists
 app.post('/api/auth/login', async (req, res) => {
   const { phone } = req.body;
   if (!phone) return res.status(400).json({ error: 'Phone number required' });
   const cleanPhone = phone.replace(/\D/g, '').slice(-10);
   try {
-    // Check by uid or phone_number (handles old and new users)
-    const result = await query(
-      'SELECT * FROM users WHERE uid = $1 OR phone_number = $1',
-      [cleanPhone]
-    );
-    if (result.rows.length > 0) {
-      return res.json(result.rows[0]);
+    const user = await User.findOne({
+      $or: [{ uid: cleanPhone }, { phone_number: cleanPhone }]
+    });
+    if (!user) {
+      return res.status(404).json({ 
+        error: 'Phone number not registered. Please create an account first.',
+        notRegistered: true 
+      });
     }
-    const newUser = await query(
-      'INSERT INTO users (uid, phone_number) VALUES ($1, $2) RETURNING *',
-      [cleanPhone, cleanPhone]
-    );
-    res.json(newUser.rows[0]);
+    res.json(user);
   } catch (err) {
-    console.error(err);
+    console.error('Login error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Register: Create new user account
+app.post('/api/auth/register', async (req, res) => {
+  const { phone, name, role } = req.body;
+  if (!phone || phone.replace(/\D/g, '').length < 10) {
+    return res.status(400).json({ error: 'Valid 10-digit phone number required' });
+  }
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Full name is required' });
+  }
+  const cleanPhone = phone.replace(/\D/g, '').slice(-10);
+  try {
+    const existing = await User.findOne({
+      $or: [{ uid: cleanPhone }, { phone_number: cleanPhone }]
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'This phone number is already registered. Please log in.' });
+    }
+    const newUser = await User.create({
+      uid: cleanPhone,
+      phone_number: cleanPhone,
+      name: name.trim(),
+      role: role || 'laborer'
+    });
+    res.json(newUser);
+  } catch (err) {
+    console.error('Register error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -140,41 +180,47 @@ app.post('/api/auth/login', async (req, res) => {
 app.put('/api/users/profile', requireAuth, async (req, res) => {
   const { role, name } = req.body;
   try {
-    const result = await query(
-      'UPDATE users SET role = $1, name = $2 WHERE uid = $3 RETURNING *',
-      [role, name, req.uid]
+    const user = await User.findOneAndUpdate(
+      { uid: req.uid },
+      { role, name },
+      { new: true }
     );
-    res.json(result.rows[0]);
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    res.json(user);
   } catch (err) {
-    console.error(err);
+    console.error('Update profile error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
+// Helper: Local date strings YYYY-MM-DD
+const getLocalDateStr = (offsetDays = 0) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 // 3. Laborer: Set Availability for Tomorrow
 app.post('/api/availability', requireAuth, async (req, res) => {
   try {
-    const userResult = await query('SELECT id, role FROM users WHERE uid = $1', [req.uid]);
-    if (userResult.rows.length === 0 || userResult.rows[0].role !== 'laborer') {
-      return res.status(403).json({ error: 'Only laborers can set availability' });
+    const user = await User.findOne({ uid: req.uid });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
     }
-    const userId = userResult.rows[0].id;
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const dateStr = getLocalDateStr(1);
 
-    const availResult = await query(
-      `INSERT INTO availability (user_id, available_date, status) 
-       VALUES ($1, $2, 'available')
-       ON CONFLICT (user_id, available_date) 
-       DO UPDATE SET status = 'available', hired_by = NULL
-       RETURNING *`,
-      [userId, dateStr]
+    const avail = await Availability.findOneAndUpdate(
+      { user_id: user._id, available_date: dateStr },
+      { status: 'available', hired_by: null },
+      { upsert: true, new: true }
     );
-    res.json(availResult.rows[0]);
+    res.json(avail);
   } catch (err) {
-    console.error(err);
+    console.error('Set availability error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -182,25 +228,22 @@ app.post('/api/availability', requireAuth, async (req, res) => {
 // 3a. Laborer: Get Availability Status for Tomorrow
 app.get('/api/availability', requireAuth, async (req, res) => {
   try {
-    const userResult = await query('SELECT id FROM users WHERE uid = $1', [req.uid]);
-    if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const user = await User.findOne({ uid: req.uid });
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const result = await query(
-      `SELECT * FROM availability WHERE user_id = $1 AND available_date = $2`,
-      [userResult.rows[0].id, dateStr]
-    );
-    
-    if (result.rows.length > 0) {
-      res.json(result.rows[0]);
+    // Check for any active availability
+    const record = await Availability.findOne({ 
+      user_id: user._id, 
+      status: { $in: ['available', 'hired'] } 
+    }).sort({ created_at: -1 });
+
+    if (record) {
+      res.json(record);
     } else {
       res.json({ status: 'none' });
     }
   } catch (err) {
-    console.error(err);
+    console.error('Get availability error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -208,21 +251,13 @@ app.get('/api/availability', requireAuth, async (req, res) => {
 // 3b. Laborer: Cancel Availability for Tomorrow
 app.delete('/api/availability', requireAuth, async (req, res) => {
   try {
-    const userResult = await query('SELECT id FROM users WHERE uid = $1', [req.uid]);
-    if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
-    
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const user = await User.findOne({ uid: req.uid });
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    await query(
-      `DELETE FROM availability WHERE user_id = $1 AND available_date = $2`,
-      [userResult.rows[0].id, dateStr]
-    );
-    
+    await Availability.deleteMany({ user_id: user._id });
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
+    console.error('Cancel availability error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -230,20 +265,33 @@ app.delete('/api/availability', requireAuth, async (req, res) => {
 // 4. Farm Owner: Get Available Laborers for Tomorrow
 app.get('/api/laborers', requireAuth, async (req, res) => {
   try {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const owner = await User.findOne({ uid: req.uid });
 
-    const result = await query(
-      `SELECT u.id, u.name, u.phone_number, a.available_date 
-       FROM users u 
-       JOIN availability a ON u.id = a.user_id 
-       WHERE u.role = 'laborer' AND a.available_date = $1 AND a.status = 'available'`,
-      [dateStr]
-    );
-    res.json(result.rows);
+    // Fetch all currently available laborers
+    const availabilities = await Availability.find({
+      status: 'available'
+    }).populate({
+      path: 'user_id',
+      select: 'name phone_number role'
+    });
+
+    const result = availabilities
+      .filter(a => {
+        if (!a.user_id) return false;
+        // Exclude the currently logged in owner from seeing themselves
+        if (owner && a.user_id._id.toString() === owner._id.toString()) return false;
+        return true;
+      })
+      .map(a => ({
+        id: a.user_id._id.toString(),
+        name: a.user_id.name || 'Available Laborer',
+        phone_number: a.user_id.phone_number,
+        available_date: a.available_date
+      }));
+
+    res.json(result);
   } catch (err) {
-    console.error(err);
+    console.error('Get available laborers error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -252,32 +300,24 @@ app.get('/api/laborers', requireAuth, async (req, res) => {
 app.post('/api/laborers/:id/hire', requireAuth, async (req, res) => {
   const laborerId = req.params.id;
   try {
-    // Get user id for farm owner
-    const ownerResult = await query('SELECT id, role FROM users WHERE uid = $1', [req.uid]);
-    if (ownerResult.rows.length === 0 || ownerResult.rows[0].role !== 'farmowner') {
-      return res.status(403).json({ error: 'Only farm owners can hire' });
+    const owner = await User.findOne({ uid: req.uid });
+    if (!owner) {
+      return res.status(404).json({ error: 'User not found' });
     }
-    const ownerId = ownerResult.rows[0].id;
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
-
-    const result = await query(
-      `UPDATE availability 
-       SET status = 'hired', hired_by = $1 
-       WHERE user_id = $2 AND available_date = $3 AND status = 'available'
-       RETURNING *`,
-      [ownerId, laborerId, dateStr]
+    const updated = await Availability.findOneAndUpdate(
+      { user_id: laborerId, status: 'available' },
+      { status: 'hired', hired_by: owner._id },
+      { new: true }
     );
 
-    if (result.rows.length === 0) {
+    if (!updated) {
       return res.status(400).json({ error: 'Laborer no longer available or not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(updated);
   } catch (err) {
-    console.error(err);
+    console.error('Hire laborer error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -285,26 +325,28 @@ app.post('/api/laborers/:id/hire', requireAuth, async (req, res) => {
 // 6. Farm Owner: Get Hired Laborers for Tomorrow
 app.get('/api/laborers/hired', requireAuth, async (req, res) => {
   try {
-    const ownerResult = await query('SELECT id, role FROM users WHERE uid = $1', [req.uid]);
-    if (ownerResult.rows.length === 0 || ownerResult.rows[0].role !== 'farmowner') {
-      return res.status(403).json({ error: 'Only farm owners can view hired laborers' });
+    const owner = await User.findOne({ uid: req.uid });
+    if (!owner) {
+      return res.status(404).json({ error: 'User not found' });
     }
-    const ownerId = ownerResult.rows[0].id;
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const dateStr = tomorrow.toISOString().split('T')[0];
+    const hiredAvailabilities = await Availability.find({
+      hired_by: owner._id,
+      status: 'hired'
+    }).populate('user_id', 'name phone_number');
 
-    const result = await query(
-      `SELECT u.id, u.name, u.phone_number, a.available_date 
-       FROM users u 
-       JOIN availability a ON u.id = a.user_id 
-       WHERE a.hired_by = $1 AND a.available_date = $2 AND a.status = 'hired'`,
-      [ownerId, dateStr]
-    );
-    res.json(result.rows);
+    const result = hiredAvailabilities
+      .filter(a => a.user_id)
+      .map(a => ({
+        id: a.user_id._id.toString(),
+        name: a.user_id.name || 'Laborer',
+        phone_number: a.user_id.phone_number,
+        available_date: a.available_date
+      }));
+
+    res.json(result);
   } catch (err) {
-    console.error(err);
+    console.error('Get hired laborers error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
