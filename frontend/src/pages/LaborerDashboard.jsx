@@ -1,14 +1,16 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../App';
-import { LogOut, ThumbsUp, ThumbsDown, Check, X, RefreshCw, Bell, Calendar, Phone } from 'lucide-react';
+import { LogOut, ThumbsUp, ThumbsDown, Check, X, RefreshCw, Bell, Calendar, Phone, User as UserIcon, ArrowLeft } from 'lucide-react';
 import { socket, joinUserRoom } from '../socket';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
+import UserProfile from '../components/UserProfile';
 
 export default function LaborerDashboard() {
   const { t } = useTranslation();
   const { user, setUser } = useContext(AuthContext);
+  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' | 'account'
   const [availability, setAvailability] = useState('prompt'); // 'prompt' | 'available' | 'not_available'
   const [jobs, setJobs] = useState([]);
   const [receivedBookings, setReceivedBookings] = useState([]);
@@ -126,20 +128,48 @@ export default function LaborerDashboard() {
     <div className="flex flex-col flex-1 w-full space-y-6 animate-in slide-in-from-bottom-4 duration-500 relative overflow-y-auto pb-10 max-w-md mx-auto">
       {/* Top Header */}
       <div className="flex items-center justify-between mt-2">
-        <div>
-          <h2 className="text-xl font-bold text-gray-800">{t('laborer_dash.hi')}, {user?.name || t('laborer_dash.laborer')}</h2>
-          <p className="text-xs text-gray-500">{t('laborer_dash.dashboard_title')}</p>
+        <div className="flex items-center gap-2">
+          {activeView === 'account' && (
+            <button onClick={() => setActiveView('dashboard')} className="p-1 -ml-2 text-gray-500 hover:text-gray-800">
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+          <div>
+            <h2 className="text-xl font-bold text-gray-800">
+              {activeView === 'account' ? 'My Account' : `${t('laborer_dash.hi')}, ${user?.name || t('laborer_dash.laborer')}`}
+            </h2>
+            <p className="text-xs text-gray-500">
+              {activeView === 'account' ? 'Manage your profile and settings' : t('laborer_dash.dashboard_title')}
+            </p>
+          </div>
         </div>
-        <button
-          onClick={() => setUser(null)}
-          className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-          title="Logout"
-        >
-          <LogOut className="w-5 h-5" />
-        </button>
+        
+        {activeView === 'dashboard' && (
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => setActiveView('account')}
+              className="p-2 text-gray-500 hover:text-green-600 transition-colors"
+              title="Account"
+            >
+              <UserIcon className="w-5 h-5" />
+            </button>
+            <button
+              onClick={() => setUser(null)}
+              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
+              title="Logout"
+            >
+              <LogOut className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
 
       <EmailVerificationBanner />
+
+      {activeView === 'account' ? (
+        <UserProfile onLogout={() => setUser(null)} />
+      ) : (
+        <>
 
       {/* DIRECT BOOKING REQUESTS RECEIVED */}
       {pendingBookings.length > 0 && (
@@ -327,6 +357,8 @@ export default function LaborerDashboard() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </div>
   );

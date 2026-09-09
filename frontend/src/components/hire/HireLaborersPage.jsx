@@ -9,6 +9,7 @@ import WorkAlertForm from './WorkAlertForm';
 import NotificationsPage from './NotificationsPage';
 import BookingsPage from './BookingsPage';
 import HireBottomNavigation from './HireBottomNavigation';
+import UserProfile from '../UserProfile';
 import { useTranslation } from 'react-i18next';
 
 export default function HireLaborersPage({ user, onLogout }) {
@@ -197,6 +198,10 @@ export default function HireLaborersPage({ user, onLogout }) {
 
         {activeTab === 'post_job' && (
           <WorkAlertForm onJobCreated={() => handleTabChange('laborers')} />
+        )}
+
+        {activeTab === 'account' && (
+          <UserProfile onLogout={onLogout} />
         )}
       </div>
 

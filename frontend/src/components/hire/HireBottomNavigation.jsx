@@ -64,6 +64,19 @@ export default function HireBottomNavigation({ activeTab, setActiveTab, unreadCo
           <Calendar className="w-5 h-5" />
           <span className="text-xs">📅 {t('owner_dash.bookings')}</span>
         </button>
+
+        {/* Account Tab */}
+        <button
+          onClick={() => setActiveTab('account')}
+          className={`flex flex-col items-center justify-center w-full h-full space-y-1 transition-colors ${
+            activeTab === 'account'
+              ? 'text-green-600 font-bold'
+              : 'text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Users className="w-5 h-5" />
+          <span className="text-xs">👤 Account</span>
+        </button>
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../../App';
 import { api } from '../../services/api';
-import { Edit2, X, Check } from 'lucide-react';
+import { Edit2, X, Check, Trash2 } from 'lucide-react';
 
 export default function AdminJobs() {
   const { user } = useContext(AuthContext);
@@ -32,6 +32,17 @@ export default function AdminJobs() {
       setEditingJob(null);
     } catch (err) {
       alert('Failed to update job');
+    }
+  };
+
+  const handleDelete = async (jobId, title) => {
+    if (!window.confirm(`⚠️ DELETE job "${title}" (#${jobId})?\n\nThis will also remove all acceptances and rejections for this job.\n\nThis action cannot be undone!`)) return;
+    
+    try {
+      await api.admin.deleteJob(user.uid, jobId);
+      setJobs(jobs.filter(j => j.id !== jobId));
+    } catch (err) {
+      alert('Failed to delete job');
     }
   };
 
@@ -87,7 +98,7 @@ export default function AdminJobs() {
                       {j.status}
                     </span>
                   </td>
-                  <td className="p-4 text-right">
+                  <td className="p-4 text-right space-x-2">
                     <button 
                       onClick={() => setEditingJob(j)}
                       className="text-blue-600 hover:text-blue-800 p-1"
@@ -95,12 +106,19 @@ export default function AdminJobs() {
                     >
                       <Edit2 size={16} />
                     </button>
+                    <button 
+                      onClick={() => handleDelete(j.id, j.title)}
+                      className="text-red-400 hover:text-red-700 p-1"
+                      title="Delete Job"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   </td>
                 </tr>
               ))}
               {filteredJobs.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-gray-500">No jobs found.</td>
+                  <td colSpan={8} className="p-8 text-center text-gray-500">No jobs found.</td>
                 </tr>
               )}
             </tbody>

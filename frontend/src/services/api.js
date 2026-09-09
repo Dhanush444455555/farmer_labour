@@ -309,6 +309,33 @@ export const api = {
       return await res.json();
     },
 
+    deleteUser: async (uid, targetUid) => {
+      const res = await fetch(`${API_URL}/api/admin/users/${targetUid}`, {
+        method: 'DELETE',
+        headers: getHeaders(uid)
+      });
+      if (!res.ok) throw new Error('Failed to delete user');
+      return await res.json();
+    },
+
+    deleteJob: async (uid, jobId) => {
+      const res = await fetch(`${API_URL}/api/admin/jobs/${jobId}`, {
+        method: 'DELETE',
+        headers: getHeaders(uid)
+      });
+      if (!res.ok) throw new Error('Failed to delete job');
+      return await res.json();
+    },
+
+    deleteBooking: async (uid, bookingId) => {
+      const res = await fetch(`${API_URL}/api/admin/bookings/${bookingId}`, {
+        method: 'DELETE',
+        headers: getHeaders(uid)
+      });
+      if (!res.ok) throw new Error('Failed to delete booking');
+      return await res.json();
+    },
+
     getJobs: async (uid) => {
       const res = await fetch(`${API_URL}/api/admin/jobs`, { headers: getHeaders(uid) });
       if (!res.ok) throw new Error('Failed to fetch jobs');
@@ -393,6 +420,13 @@ export const api = {
         headers: getHeaders(uid)
       });
       if (!res.ok) throw new Error('Failed to delete CMS content');
+      return await res.json();
+    },
+    searchUsers: async (uid, query) => {
+      const res = await fetch(`${API_URL}/api/admin/users/search?q=${encodeURIComponent(query)}`, {
+        headers: getHeaders(uid)
+      });
+      if (!res.ok) return [];
       return await res.json();
     },
     sendNotification: async (uid, notificationData) => {

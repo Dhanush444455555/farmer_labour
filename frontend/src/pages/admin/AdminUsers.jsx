@@ -1,7 +1,7 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../../App';
 import { api } from '../../services/api';
-import { Shield, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { Shield, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 
 export default function AdminUsers({ role }) {
   const { user } = useContext(AuthContext);
@@ -33,6 +33,17 @@ export default function AdminUsers({ role }) {
       setUsers(users.map(u => u.uid === uid ? { ...u, status: newStatus } : u));
     } catch (err) {
       alert("Failed to update status");
+    }
+  };
+
+  const handleDelete = async (targetUid, name) => {
+    if (!window.confirm(`⚠️ PERMANENTLY DELETE user "${name || targetUid}"?\n\nThis will remove ALL their data including jobs, bookings, and notifications.\n\nThis action cannot be undone!`)) return;
+    
+    try {
+      await api.admin.deleteUser(user.uid, targetUid);
+      setUsers(users.filter(u => u.uid !== targetUid));
+    } catch (err) {
+      alert(err.message || "Failed to delete user");
     }
   };
 
@@ -103,6 +114,11 @@ export default function AdminUsers({ role }) {
                     {u.status !== 'BLOCKED' && (
                       <button onClick={() => handleStatusChange(u.id, u.uid, 'BLOCKED')} className="text-red-600 hover:text-red-800" title="Block">
                         <Shield size={18} />
+                      </button>
+                    )}
+                    {u.uid !== user.uid && (
+                      <button onClick={() => handleDelete(u.uid, u.name)} className="text-red-400 hover:text-red-700 ml-1" title="Delete User">
+                        <Trash2 size={16} />
                       </button>
                     )}
                   </td>

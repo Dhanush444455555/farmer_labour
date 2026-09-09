@@ -1,6 +1,7 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../../App';
 import { api } from '../../services/api';
+import { Trash2 } from 'lucide-react';
 
 export default function AdminBookings() {
   const { user } = useContext(AuthContext);
@@ -21,6 +22,17 @@ export default function AdminBookings() {
     fetchBookings();
   }, [user]);
 
+  const handleDelete = async (bookingId, workTitle) => {
+    if (!window.confirm(`⚠️ DELETE booking "${workTitle}" (#${bookingId})?\n\nThis action cannot be undone!`)) return;
+    
+    try {
+      await api.admin.deleteBooking(user.uid, bookingId);
+      setBookings(bookings.filter(b => b.id !== bookingId));
+    } catch (err) {
+      alert('Failed to delete booking');
+    }
+  };
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
       <div className="p-6 border-b border-gray-100 bg-gray-50">
@@ -40,6 +52,7 @@ export default function AdminBookings() {
                 <th className="p-4 font-medium">Wage</th>
                 <th className="p-4 font-medium">Status</th>
                 <th className="p-4 font-medium">Created At</th>
+                <th className="p-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100 text-sm">
@@ -60,11 +73,20 @@ export default function AdminBookings() {
                     </span>
                   </td>
                   <td className="p-4 text-gray-500">{new Date(b.created_at).toLocaleString()}</td>
+                  <td className="p-4 text-right">
+                    <button 
+                      onClick={() => handleDelete(b.id, b.work_title)}
+                      className="text-red-400 hover:text-red-700 p-1"
+                      title="Delete Booking"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </td>
                 </tr>
               ))}
               {bookings.length === 0 && (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-gray-500">No bookings found.</td>
+                  <td colSpan={7} className="p-8 text-center text-gray-500">No bookings found.</td>
                 </tr>
               )}
             </tbody>

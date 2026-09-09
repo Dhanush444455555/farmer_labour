@@ -419,21 +419,42 @@ app.get('/api/laborers', async (req, res) => {
 
 // --- USER NOTIFICATIONS & CMS ---
 
-// GET /api/notifications
+// GET /api/notifications - returns formatted list with unread flag
 app.get('/api/notifications', requireAuth, async (req, res) => {
   try {
-    const notifs = await query('SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC', [req.user.uid]);
-    res.json(notifs.rows);
+    const { rows: notifications } = await query(
+      'SELECT id, type, title, message, is_read, created_at as time FROM notifications WHERE user_id = ? ORDER BY id DESC',
+      [req.uid]
+    );
+    const formatted = notifications.map(n => ({
+      id: String(n.id),
+      type: n.type,
+      title: n.title,
+      message: n.message,
+      time: n.time || 'Today',
+      unread: n.is_read === 0
+    }));
+    res.json(formatted);
   } catch (err) {
     console.error('Error fetching notifications:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// PATCH /api/notifications/:id/read
-app.patch('/api/notifications/:id/read', requireAuth, async (req, res) => {
+// PUT /api/notifications/:id/read - Mark single notification as read
+app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
   try {
-    await run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, req.user.uid]);
+    await run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, req.uid]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /api/notifications/read-all - Mark all notifications as read
+app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
+  try {
+    await run('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [req.uid]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -865,50 +886,7 @@ app.post('/api/bookings/:id/reject', requireAuth, async (req, res) => {
 // ==========================================
 
 // GET /api/notifications - Get notifications for logged in user
-app.get('/api/notifications', requireAuth, async (req, res) => {
-  try {
-    const { rows: notifications } = await query(
-      'SELECT id, type, title, message, is_read as unread, created_at as time FROM notifications WHERE user_id = ? ORDER BY id DESC',
-      [req.uid]
-    );
-
-    const formatted = notifications.map(n => ({
-      id: String(n.id),
-      type: n.type,
-      title: n.title,
-      message: n.message,
-      time: n.time || 'Today',
-      unread: n.unread === 0
-    }));
-
-    res.json(formatted);
-  } catch (err) {
-    console.error('Error fetching notifications:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// PUT /api/notifications/:id/read - Mark notification as read
-app.put('/api/notifications/:id/read', requireAuth, async (req, res) => {
-  try {
-    await run('UPDATE notifications SET is_read = 1 WHERE id = ? AND user_id = ?', [req.params.id, req.uid]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
-
-// PUT /api/notifications/read-all - Mark all notifications as read
-app.put('/api/notifications/read-all', requireAuth, async (req, res) => {
-  try {
-    await run('UPDATE notifications SET is_read = 1 WHERE user_id = ?', [req.uid]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-});
+// (notification routes consolidated above near line 422)
 
 // ==========================================
 // 7. ADMIN & OWNER PANEL APIS
@@ -1099,6 +1077,53 @@ app.patch('/api/admin/jobs/:jobId', requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+// DELETE /api/admin/users/:uid - Permanently delete a user
+app.delete('/api/admin/users/:uid', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { uid } = req.params;
+    if (uid === req.uid) return res.status(400).json({ error: 'Cannot delete your own account' });
+    await run('DELETE FROM notifications WHERE user_id = ?', [uid]);
+    await run('DELETE FROM bookings WHERE owner_id = ? OR laborer_id = ?', [uid, uid]);
+    await run('DELETE FROM job_acceptances WHERE laborer_id = ?', [uid]);
+    await run('DELETE FROM jobs WHERE hirer_id = ?', [uid]);
+    await run('DELETE FROM login_activity WHERE user_id = ?', [uid]);
+    await run('DELETE FROM users WHERE uid = ?', [uid]);
+    await logAuditAction(req.uid, 'Delete User', uid);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE /api/admin/jobs/:jobId - Delete a job post
+app.delete('/api/admin/jobs/:jobId', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { jobId } = req.params;
+    await run('DELETE FROM job_acceptances WHERE job_id = ?', [jobId]);
+    await run('DELETE FROM job_rejections WHERE job_id = ?', [jobId]);
+    await run('DELETE FROM jobs WHERE id = ?', [jobId]);
+    await logAuditAction(req.uid, 'Delete Job', jobId);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete job error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE /api/admin/bookings/:id - Delete a booking
+app.delete('/api/admin/bookings/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await run('DELETE FROM bookings WHERE id = ?', [id]);
+    await logAuditAction(req.uid, 'Delete Booking', id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Delete booking error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // GET /api/admin/settings - Get settings
 app.get('/api/admin/settings', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -1175,23 +1200,47 @@ app.delete('/api/admin/cms/:id', requireAuth, requireAdmin, async (req, res) => 
   }
 });
 
+// GET /api/admin/users/search - Search users by name or phone (for notification targeting)
+app.get('/api/admin/users/search', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.json([]);
+    const { rows } = await query(
+      "SELECT uid, name, phone_number, role FROM users WHERE name LIKE ? OR phone_number LIKE ? LIMIT 10",
+      [`%${q}%`, `%${q}%`]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // POST /api/admin/notifications - Send push notification
 app.post('/api/admin/notifications', requireAuth, requireAdmin, async (req, res) => {
   try {
-    const { target_users, type, title, message } = req.body;
+    const { target_users, type, title, message, target_uid } = req.body;
     
-    let targetRole = null;
-    if (target_users === 'LABORERS') targetRole = 'laborer';
-    if (target_users === 'HIRERS') targetRole = 'farmowner';
-    
-    let sql = "SELECT uid FROM users";
-    const params = [];
-    if (targetRole) {
-      sql += " WHERE role = ?";
-      params.push(targetRole);
+    let users = [];
+
+    if (target_users === 'SPECIFIC' && target_uid) {
+      // Send to a specific user
+      const targetUser = await get("SELECT uid FROM users WHERE uid = ?", [target_uid]);
+      if (!targetUser) return res.status(404).json({ error: 'Target user not found' });
+      users = [targetUser];
+    } else {
+      let targetRole = null;
+      if (target_users === 'LABORERS') targetRole = 'laborer';
+      if (target_users === 'HIRERS') targetRole = 'farmowner';
+      
+      let sql = "SELECT uid FROM users";
+      const params = [];
+      if (targetRole) {
+        sql += " WHERE role = ?";
+        params.push(targetRole);
+      }
+      const result = await query(sql, params);
+      users = result.rows;
     }
-    
-    const { rows: users } = await query(sql, params);
     
     for (const u of users) {
       await run(
@@ -1201,9 +1250,13 @@ app.post('/api/admin/notifications', requireAuth, requireAdmin, async (req, res)
     }
 
     // Emit via Socket.io
-    io.emit('notification-created', { title, message, type });
+    if (target_users === 'SPECIFIC' && target_uid) {
+      io.to(`user_${target_uid}`).emit('notification-created', { title, message, type });
+    } else {
+      io.emit('notification-created', { title, message, type });
+    }
 
-    await logAuditAction(req.uid, 'Send Push Notification', target_users, { title, count: users.length });
+    await logAuditAction(req.uid, 'Send Push Notification', target_users === 'SPECIFIC' ? `user:${target_uid}` : target_users, { title, count: users.length });
     res.json({ success: true, count: users.length });
   } catch (err) {
     console.error(err);
