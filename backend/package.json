@@ -1,36 +1,13 @@
 {
   "name": "backend",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "version": "2.0.0",
+  "description": "Farm Connect Unified Python Backend",
+  "main": "main.py",
   "scripts": {
-    "start": "node index.js",
-    "dev": "node index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "python main.py",
+    "dev": "python -m uvicorn main:socket_app --host 0.0.0.0 --port 5000 --reload"
   },
-  "keywords": [],
+  "keywords": ["farm-connect", "fastapi", "python", "ai-agent"],
   "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "dependencies": {
-    "@google/genai": "^2.13.0",
-    "@langchain/core": "^1.2.13",
-    "@langchain/google-genai": "^2.3.2",
-    "@langchain/langgraph": "^1.4.18",
-    "axios": "^1.18.1",
-    "chromadb": "^3.5.0",
-    "cors": "^2.8.6",
-    "dotenv": "^17.4.2",
-    "express": "^5.2.1",
-    "express-rate-limit": "^8.6.1",
-    "helmet": "^8.3.0",
-    "mongoose": "^9.8.1",
-    "node-cache": "^5.1.2",
-    "nodemailer": "^9.0.3",
-    "pg": "^8.22.0",
-    "socket.io": "^4.8.3",
-    "sqlite": "^5.1.1",
-    "sqlite3": "^6.0.1",
-    "zod": "^4.6.5"
-  }
+  "license": "ISC"
 }

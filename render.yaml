@@ -1,14 +1,14 @@
 services:
   - type: web
     name: farmconnect-backend
-    env: node
+    env: python
     rootDir: backend
-    buildCommand: npm install
-    startCommand: node index.js
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:socket_app --host 0.0.0.0 --port 5000
     envVars:
       - key: PORT
         value: 5000
-      - key: NODE_ENV
-        value: production
       - key: ADMIN_SECRET_KEY
         generateValue: true
+      - key: LLM_PROVIDER
+        value: gemini

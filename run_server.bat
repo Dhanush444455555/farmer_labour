@@ -1,37 +1,39 @@
 @echo off
-title Labour App Server
+title Farm Connect Server
 cd /d "%~dp0"
 
 echo =========================================
-echo Starting Labour App Server Setup...
+echo Starting Farm Connect System...
 echo =========================================
 
 echo.
-echo Installing dependencies if missing...
-if not exist "node_modules\" (
-  echo Root node_modules not found, running npm install...
-  call npm install
-)
-if not exist "backend\node_modules\" (
-  echo Backend node_modules not found, running npm install...
-  call npm install --prefix backend
-)
+echo Checking dependencies...
 if not exist "frontend\node_modules\" (
-  echo Frontend node_modules not found, running npm install...
+  echo Frontend dependencies missing. Installing...
   call npm install --prefix frontend
 )
 
 echo.
 echo =========================================
-echo All dependencies installed.
-echo Starting backend and frontend servers...
+echo Launching Servers...
 echo =========================================
 echo.
 
-:: Start frontend in browser after a short delay to ensure Vite is up
+:: Start Python Backend
+IF EXIST "agent-service\.venv\Scripts\activate.bat" (
+    start "FarmConnect-Backend" cmd /k "cd /d backend && call ..\agent-service\.venv\Scripts\activate.bat && uvicorn main:socket_app --host 0.0.0.0 --port 5000 --reload"
+) ELSE (
+    start "FarmConnect-Backend" cmd /k "cd /d backend && python -m uvicorn main:socket_app --host 0.0.0.0 --port 5000 --reload"
+)
+
+:: Start Frontend in Vite
+start "FarmConnect-Frontend" cmd /k "cd /d frontend && npm run dev"
+
+:: Open Browser
 start cmd /c "timeout /t 3 >nul && start http://localhost:5173"
 
-:: Start the servers concurrently
-call npm run dev
-
+echo.
+echo Application running at http://localhost:5173
+echo API & Docs running at http://localhost:5000/docs
+echo.
 pause
