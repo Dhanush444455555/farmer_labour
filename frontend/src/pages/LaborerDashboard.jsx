@@ -1,22 +1,54 @@
 import { useState, useEffect, useContext } from 'react';
 import { AuthContext } from '../App';
-import { LogOut, ThumbsUp, ThumbsDown, Check, X, RefreshCw, Bell, Calendar, Phone, User as UserIcon, ArrowLeft } from 'lucide-react';
 import { socket, joinUserRoom } from '../socket';
 import { api } from '../services/api';
 import { useTranslation } from 'react-i18next';
+import { LogOut, RefreshCw, Search, Volume2, Sparkles, Scale, ShieldCheck } from 'lucide-react';
+import { AnimatePresence, motion } from 'framer-motion';
+import PersistentLanguageSwitcher from '../components/common/PersistentLanguageSwitcher';
 import EmailVerificationBanner from '../components/EmailVerificationBanner';
-import UserProfile from '../components/UserProfile';
+import LaborerAvailabilityHero from '../components/laborer/LaborerAvailabilityHero';
+import LaborerJobCard from '../components/laborer/LaborerJobCard';
+import LaborerBookingAlert from '../components/laborer/LaborerBookingAlert';
+import VisualStatusBadge from '../components/common/VisualStatusBadge';
+import VoiceInputButton from '../components/common/VoiceInputButton';
+import { JobCardSkeleton } from '../components/common/SkeletonCard';
+
+const screenVariants = {
+  initial: { opacity: 0, y: 12 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.18, ease: 'easeOut' } },
+  exit: { opacity: 0, y: -10, transition: { duration: 0.15, ease: 'easeIn' } }
+};
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  show: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.05,
+      delayChildren: 0.02
+    }
+  }
+};
 
 export default function LaborerDashboard() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
+  const currentLang = i18n.language || 'en';
   const { user, setUser } = useContext(AuthContext);
-  const [activeView, setActiveView] = useState('dashboard'); // 'dashboard' | 'account'
-  const [availability, setAvailability] = useState('prompt'); // 'prompt' | 'available' | 'not_available'
+
+  const [availability, setAvailability] = useState('prompt'); // 'prompt' | 'AVAILABLE' | 'NOT_AVAILABLE'
   const [jobs, setJobs] = useState([]);
   const [receivedBookings, setReceivedBookings] = useState([]);
-  const [rejectedJobIds, setRejectedJobIds] = useState([]);
   const [acceptedJobIds, setAcceptedJobIds] = useState([]);
+  const [rejectedJobIds, setRejectedJobIds] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  // AI Agent Search Results
+  const [aiVoiceSummary, setAiVoiceSummary] = useState('');
+  const [ragAnswer, setRagAnswer] = useState(null);
 
   useEffect(() => {
     if (user?.uid) {
@@ -27,10 +59,7 @@ export default function LaborerDashboard() {
     }
 
     const handleNewWorkAlert = () => fetchJobs();
-    const handleBookingRequest = () => {
-      fetchBookings();
-      alert('You received a new direct booking request!');
-    };
+    const handleBookingRequest = () => fetchBookings();
 
     socket.on('new-work-alert', handleNewWorkAlert);
     socket.on('booking-request', handleBookingRequest);
@@ -44,19 +73,22 @@ export default function LaborerDashboard() {
   const checkUserAvailability = async () => {
     try {
       const res = await api.getAvailability(user.uid);
-      if (res.status === 'AVAILABLE') setAvailability('available');
-      else if (res.status === 'NOT_AVAILABLE') setAvailability('not_available');
-    } catch (e) {}
+      if (res.status === 'AVAILABLE') setAvailability('AVAILABLE');
+      else if (res.status === 'NOT_AVAILABLE') setAvailability('NOT_AVAILABLE');
+      else setAvailability('prompt');
+    } catch (e) {
+      setAvailability('prompt');
+    }
   };
 
   const fetchJobs = async () => {
     try {
       const data = await api.getTomorrowJobs(user.uid);
       setJobs(data || []);
-      const alreadyAccepted = data.filter(j => j.isAcceptedByMe).map(j => j.id);
+      const alreadyAccepted = (data || []).filter((j) => j.isAcceptedByMe).map((j) => j.id);
       setAcceptedJobIds(alreadyAccepted);
     } catch (err) {
-      console.error('Error fetching tomorrow jobs:', err);
+      console.error('Error fetching jobs:', err);
     }
     setLoading(false);
   };
@@ -69,17 +101,36 @@ export default function LaborerDashboard() {
   };
 
   const handleSelectAvailability = async (status) => {
-    const statusVal = status === 'available' ? 'AVAILABLE' : 'NOT_AVAILABLE';
+    setActionLoading(true);
     setAvailability(status);
     try {
-      await api.setAvailability(user.uid, 'Tomorrow', statusVal);
-      if (status === 'available') fetchJobs();
+      await api.setAvailability(user.uid, 'Tomorrow', status);
+      if (status === 'AVAILABLE') {
+        fetchJobs();
+      }
     } catch (e) {
       console.error(e);
     }
+    setActionLoading(false);
   };
 
-  const handleReject = async (jobId) => {
+  const handleAcceptJob = async (jobId) => {
+    if (acceptedJobIds.includes(jobId)) return;
+    setAcceptedJobIds((prev) => [...prev, jobId]);
+
+    try {
+      const res = await api.acceptJob(user.uid, jobId);
+      if (res.isFull) {
+        setJobs((prev) => prev.map((j) => (j.id === jobId ? { ...j, status: 'FULL' } : j)));
+      }
+    } catch (err) {
+      console.error(err);
+      alert('Could not accept job: ' + (err.message || 'Already full.'));
+      setAcceptedJobIds((prev) => prev.filter((id) => id !== jobId));
+    }
+  };
+
+  const handleRejectJob = async (jobId) => {
     setRejectedJobIds((prev) => [...prev, jobId]);
     try {
       await api.rejectJob(user.uid, jobId);
@@ -88,278 +139,373 @@ export default function LaborerDashboard() {
     }
   };
 
-  const handleAccept = async (jobId) => {
-    if (acceptedJobIds.includes(jobId)) return;
-    setAcceptedJobIds((prev) => [...prev, jobId]);
-
-    try {
-      const res = await api.acceptJob(user.uid, jobId);
-      if (res.isFull) {
-        setJobs(prev => prev.map(j => j.id === jobId ? { ...j, status: 'FULL' } : j));
-      }
-    } catch (err) {
-      alert(err.message || 'Failed to accept job');
-      setAcceptedJobIds((prev) => prev.filter(id => id !== jobId));
-    }
-  };
-
   const handleAcceptBooking = async (bookingId) => {
     try {
-      await api.acceptBooking(user.uid, bookingId);
-      fetchBookings();
-    } catch (e) {
-      alert('Failed to accept booking');
+      await api.updateBookingStatus(user.uid, bookingId, 'ACCEPTED');
+      setReceivedBookings((prev) => prev.filter((b) => b.id !== bookingId));
+      fetchJobs();
+    } catch (err) {
+      console.error(err);
     }
   };
 
   const handleRejectBooking = async (bookingId) => {
     try {
-      await api.rejectBooking(user.uid, bookingId);
-      fetchBookings();
-    } catch (e) {
-      alert('Failed to reject booking');
+      await api.updateBookingStatus(user.uid, bookingId, 'REJECTED');
+      setReceivedBookings((prev) => prev.filter((b) => b.id !== bookingId));
+    } catch (err) {
+      console.error(err);
     }
   };
 
+  // Run LangGraph AI Search & ChromaDB RAG Agent
+  const handleRunAiSearch = async (queryText) => {
+    const text = (queryText || searchQuery).trim();
+    if (!text) return;
+
+    setSearchQuery(text);
+    setSearchLoading(true);
+
+    try {
+      const result = await api.runJobSearchAgent(user.uid, {
+        query: text,
+        language: currentLang
+      });
+
+      setAiVoiceSummary(result.voiceSummary || '');
+      setRagAnswer(result.ragAnswer || null);
+
+      if (result.rankedJobs && result.rankedJobs.length > 0) {
+        setJobs(result.rankedJobs);
+      }
+
+      // Voice readback if Web Speech Synthesis is available
+      if (window.speechSynthesis && result.voiceSummary) {
+        window.speechSynthesis.cancel();
+        const utterance = new SpeechSynthesisUtterance(result.voiceSummary.slice(0, 200));
+        utterance.rate = 0.95;
+        window.speechSynthesis.speak(utterance);
+      }
+    } catch (err) {
+      console.error('AI Search Error:', err);
+    }
+    setSearchLoading(false);
+  };
+
+  const handleClearSearch = () => {
+    setSearchQuery('');
+    setAiVoiceSummary('');
+    setRagAnswer(null);
+    fetchJobs();
+  };
+
   const visibleJobs = jobs.filter((j) => !rejectedJobIds.includes(j.id));
-  const pendingBookings = receivedBookings.filter((b) => b.status === 'PENDING');
+  const activeBooking = receivedBookings.find((b) => b.status === 'PENDING');
 
   return (
-    <div className="flex flex-col flex-1 w-full space-y-6 animate-in slide-in-from-bottom-4 duration-500 relative overflow-y-auto pb-10 max-w-md mx-auto">
-      {/* Top Header */}
-      <div className="flex items-center justify-between mt-2">
-        <div className="flex items-center gap-2">
-          {activeView === 'account' && (
-            <button onClick={() => setActiveView('dashboard')} className="p-1 -ml-2 text-gray-500 hover:text-gray-800">
-              <ArrowLeft className="w-5 h-5" />
-            </button>
-          )}
-          <div>
-            <h2 className="text-xl font-bold text-gray-800">
-              {activeView === 'account' ? 'My Account' : `${t('laborer_dash.hi')}, ${user?.name || t('laborer_dash.laborer')}`}
-            </h2>
-            <p className="text-xs text-gray-500">
-              {activeView === 'account' ? 'Manage your profile and settings' : t('laborer_dash.dashboard_title')}
-            </p>
-          </div>
-        </div>
-        
-        {activeView === 'dashboard' && (
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setActiveView('account')}
-              className="p-2 text-gray-500 hover:text-green-600 transition-colors"
-              title="Account"
-            >
-              <UserIcon className="w-5 h-5" />
-            </button>
-            <button
-              onClick={() => setUser(null)}
-              className="p-2 text-gray-400 hover:text-red-600 transition-colors"
-              title="Logout"
-            >
-              <LogOut className="w-5 h-5" />
-            </button>
-          </div>
-        )}
-      </div>
+    <div className="min-h-screen bg-emerald-950/5 flex flex-col pb-16">
+      {/* Persistent 56px Language Bar */}
+      <PersistentLanguageSwitcher />
 
-      <EmailVerificationBanner />
+      <div className="flex-1 max-w-xl w-full mx-auto p-4 flex flex-col gap-5">
+        <EmailVerificationBanner />
 
-      {activeView === 'account' ? (
-        <UserProfile onLogout={() => setUser(null)} />
-      ) : (
-        <>
-
-      {/* DIRECT BOOKING REQUESTS RECEIVED */}
-      {pendingBookings.length > 0 && (
-        <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 shadow-sm space-y-3">
-          <h3 className="font-bold text-amber-900 text-sm flex items-center">
-            <Bell className="w-4 h-4 mr-1.5 text-amber-600" />
-            {t('laborer_dash.direct_booking')} ({pendingBookings.length})
-          </h3>
-          {pendingBookings.map((b) => (
-            <div key={b.id} className="bg-white p-4 rounded-xl border border-amber-200 space-y-2 text-xs">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="font-bold text-gray-900 text-sm">{b.work_title}</p>
-                  <p className="text-gray-500">{t('laborer_dash.from')}: {b.ownerName || 'Farm Owner'}</p>
-                </div>
-                <span className="font-bold text-green-700 text-sm">{b.wage}</span>
-              </div>
-              <div className="flex space-x-2 pt-2">
-                <button
-                  onClick={() => handleRejectBooking(b.id)}
-                  className="flex-1 bg-gray-100 hover:bg-red-50 text-red-600 font-bold py-2 rounded-lg"
-                >
-                  {t('laborer_dash.reject')}
-                </button>
-                <button
-                  onClick={() => handleAcceptBooking(b.id)}
-                  className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-2 rounded-lg"
-                >
-                  {t('laborer_dash.accept')}
-                </button>
-              </div>
+        {/* User Card */}
+        <motion.div
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.18 }}
+          className="bg-gradient-to-r from-emerald-800 to-emerald-900 rounded-3xl p-4 sm:p-5 text-white shadow-xl border-3 border-emerald-600 flex items-center justify-between"
+        >
+          <div className="flex items-center gap-3.5">
+            <div className="w-14 h-14 rounded-2xl bg-yellow-400 text-emerald-950 flex items-center justify-center text-3xl font-black shadow-md shrink-0">
+              {user?.gender === 'Female' ? '👩' : '👨'}
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* STEP 1: TOMORROW AVAILABILITY SELECTION */}
-      {availability === 'prompt' && (
-        <div className="space-y-6 animate-in zoom-in duration-300 my-auto py-4">
-          <div className="text-center space-y-2">
-            <h2 className="text-2xl font-bold text-gray-900">{t('laborer_dash.available_q')}</h2>
-            <p className="text-gray-500 text-sm">{t('laborer_dash.let_owners_know')}</p>
+            <div>
+              <span className="text-emerald-200 text-xs font-black uppercase tracking-wider block">
+                {t('laborer_dash.laborer', 'Farm Laborer')}
+              </span>
+              <h2 className="text-xl sm:text-2xl font-black text-white leading-tight">
+                {user?.name || 'Worker'}
+              </h2>
+              <span className="text-emerald-200 text-sm font-bold">
+                {user?.phone}
+              </span>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <button
-              onClick={() => handleSelectAvailability('available')}
-              className="w-full bg-white hover:bg-green-50 border-2 border-green-500 hover:border-green-600 p-6 rounded-2xl shadow-md transition-all flex items-center space-x-4 active:scale-95 text-left group"
-            >
-              <div className="bg-green-100 p-4 rounded-full group-hover:bg-green-200 transition-colors">
-                <ThumbsUp className="w-8 h-8 text-green-700" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">{t('laborer_dash.up_hand')}</h3>
-                <p className="text-green-700 text-sm font-semibold mt-0.5">{t('laborer_dash.yes_available')}</p>
-              </div>
-            </button>
-
-            <button
-              onClick={() => handleSelectAvailability('not_available')}
-              className="w-full bg-white hover:bg-red-50 border-2 border-red-200 hover:border-red-300 p-6 rounded-2xl shadow-md transition-all flex items-center space-x-4 active:scale-95 text-left group"
-            >
-              <div className="bg-red-100 p-4 rounded-full group-hover:bg-red-200 transition-colors">
-                <ThumbsDown className="w-8 h-8 text-red-600" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-gray-900">{t('laborer_dash.down_hand')}</h3>
-                <p className="text-red-600 text-sm font-semibold mt-0.5">{t('laborer_dash.no_available')}</p>
-              </div>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* NOT AVAILABLE STATE */}
-      {availability === 'not_available' && (
-        <div className="bg-white p-8 rounded-2xl border border-gray-200 shadow-sm text-center space-y-6 animate-in fade-in my-auto">
-          <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto text-red-600">
-            <ThumbsDown className="w-10 h-10" />
-          </div>
-          <div>
-            <h3 className="text-xl font-bold text-gray-900">{t('laborer_dash.not_available_title')}</h3>
-            <p className="text-gray-500 text-sm mt-1">{t('laborer_dash.not_available_desc')}</p>
-          </div>
-
-          <button
-            onClick={() => handleSelectAvailability('prompt')}
-            className="w-full bg-gray-100 hover:bg-gray-200 text-gray-800 font-bold py-3.5 px-4 rounded-xl shadow-sm transition-all flex items-center justify-center space-x-2 text-sm"
+          <motion.button
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.92 }}
+            onClick={() => setUser(null)}
+            type="button"
+            className="flex flex-col items-center justify-center min-w-[56px] min-h-[56px] px-3 rounded-2xl bg-rose-700/80 hover:bg-rose-700 text-white font-black text-xs border border-rose-400 transition-colors"
+            aria-label="Logout"
           >
-            <RefreshCw className="w-4 h-4" />
-            <span>{t('laborer_dash.change_availability')}</span>
-          </button>
-        </div>
-      )}
+            <LogOut className="w-6 h-6 mb-0.5" />
+            <span>Exit</span>
+          </motion.button>
+        </motion.div>
 
-      {/* STEP 2 & 3: TOMORROW JOBS LIST */}
-      {availability === 'available' && (
-        <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-          <div className="flex items-center justify-between bg-green-50 p-3.5 rounded-2xl border border-green-200">
-            <div className="flex items-center space-x-2">
-              <span className="w-3 h-3 bg-green-600 rounded-full animate-pulse"></span>
-              <span className="text-xs font-bold text-green-800">{t('laborer_dash.status_available')}</span>
-            </div>
-            <button
-              onClick={() => setAvailability('prompt')}
-              className="text-xs font-semibold text-green-700 underline hover:text-green-900"
-            >
-              {t('laborer_dash.change')}
-            </button>
-          </div>
-
-          <div>
-            <h2 className="text-2xl font-bold text-gray-900">{t('laborer_dash.tomorrows_work')}</h2>
-            <p className="text-gray-500 text-xs mt-0.5">{t('laborer_dash.jobs_available')}</p>
-          </div>
-
-          {visibleJobs.length === 0 ? (
-            <div className="bg-white p-8 rounded-2xl text-center border border-gray-200 shadow-sm space-y-2">
-              <p className="text-gray-600 font-bold text-base">{t('laborer_dash.no_jobs')}</p>
-              <p className="text-gray-400 text-xs">{t('laborer_dash.new_alerts')}</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {visibleJobs.map((job) => {
-                const isAccepted = acceptedJobIds.includes(job.id) || job.isAcceptedByMe;
-
-                return (
-                  <div
-                    key={job.id}
-                    className={`bg-white p-5 rounded-2xl shadow-md border transition-all ${
-                      isAccepted ? 'border-green-300 bg-green-50/40' : 'border-gray-100'
-                    }`}
-                  >
-                    <div className="space-y-2 pb-4 border-b border-gray-100">
-                      <div className="flex justify-between items-start">
-                        <span className="text-xs font-semibold text-gray-500">{t('laborer_dash.owner')}: <strong className="text-gray-900 text-sm">{job.ownerName}</strong></span>
-                        <span className="font-bold text-green-700 text-lg">{job.workerWage}</span>
-                      </div>
-
-                      <div className="text-base font-bold text-gray-900">
-                        {t('laborer_dash.work')}: <span className="text-green-800">{job.workTitle}</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-3 pt-4">
-                      {!isAccepted ? (
-                        <>
-                          <button
-                            onClick={() => handleReject(job.id)}
-                            className="flex-1 bg-white hover:bg-red-50 border-2 border-red-200 text-red-600 font-bold py-3 px-4 rounded-xl shadow-xs transition-all flex items-center justify-center space-x-1.5 active:scale-95 text-sm"
-                          >
-                            <X className="w-4 h-4" />
-                            <span>{t('laborer_dash.reject')}</span>
-                          </button>
-
-                          <button
-                            onClick={() => handleAccept(job.id)}
-                            className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5 active:scale-95 text-sm"
-                          >
-                            <Check className="w-4 h-4" />
-                            <span>{t('laborer_dash.accept')}</span>
-                          </button>
-                        </>
-                      ) : (
-                        <div className="flex w-full space-x-2">
-                          <div className="flex-1 bg-green-100 text-green-700 font-bold py-3.5 px-4 rounded-xl flex items-center justify-center space-x-2 text-sm border border-green-200">
-                            <Check className="w-4 h-4" />
-                            <span>{t('laborer_dash.accepted')}</span>
-                          </div>
-                          {job.ownerPhone && (
-                            <a 
-                              href={`tel:${job.ownerPhone}`}
-                              className="flex-1 bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 px-4 rounded-xl shadow-md transition-all flex items-center justify-center space-x-1.5 text-sm"
-                            >
-                              <Phone className="w-4 h-4" />
-                              <span>{t('laborer_dash.call_owner')}</span>
-                            </a>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+        {/* Direct Booking Modal Alert */}
+        <AnimatePresence>
+          {activeBooking && (
+            <LaborerBookingAlert
+              booking={activeBooking}
+              onAccept={handleAcceptBooking}
+              onReject={handleRejectBooking}
+            />
           )}
-        </div>
-      )}
-      </>
-      )}
+        </AnimatePresence>
+
+        <AnimatePresence mode="wait">
+          {/* Screen 1: Availability Not Set -> Hero 2-Button Choice */}
+          {availability === 'prompt' ? (
+            <motion.div
+              key="prompt"
+              variants={screenVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+            >
+              <LaborerAvailabilityHero
+                onSelectStatus={handleSelectAvailability}
+                loading={actionLoading}
+              />
+            </motion.div>
+          ) : availability === 'NOT_AVAILABLE' ? (
+            /* Screen 2: Resting Mode */
+            <motion.div
+              key="resting"
+              variants={screenVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="bg-white rounded-3xl p-6 border-4 border-rose-300 shadow-xl text-center flex flex-col gap-4"
+            >
+              <span className="text-6xl">😴</span>
+              <VisualStatusBadge
+                status="CLOSED"
+                customText={t('laborer.status_rest_title', '🔴 Resting Tomorrow')}
+                size="lg"
+              />
+              <p className="text-gray-600 font-bold text-base">
+                Farm owners have been notified that you are taking tomorrow off.
+              </p>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.95 }}
+                type="button"
+                onClick={() => handleSelectAvailability('AVAILABLE')}
+                className="w-full min-h-[64px] rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xl shadow-lg border-2 border-emerald-800 transition-colors flex items-center justify-center gap-2"
+              >
+                <span>{t('laborer.change_status', 'Change: I Want Work 🟢')}</span>
+              </motion.button>
+            </motion.div>
+          ) : (
+            /* Screen 3: Available Mode -> Live Job Feed */
+            <motion.div
+              key="available"
+              variants={screenVariants}
+              initial="initial"
+              animate="animate"
+              exit="exit"
+              className="flex flex-col gap-4"
+            >
+              {/* Status Pill Header */}
+              <div className="bg-white rounded-2xl p-4 border-2 border-emerald-300 shadow-md flex items-center justify-between">
+                <VisualStatusBadge
+                  status="AVAILABLE"
+                  customText={t('laborer.status_ready_title', '🟢 Available Tomorrow')}
+                  size="md"
+                />
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={() => handleSelectAvailability('NOT_AVAILABLE')}
+                  className="text-sm font-black text-rose-600 bg-rose-50 hover:bg-rose-100 border border-rose-200 px-3 py-2 rounded-xl transition-colors"
+                >
+                  Set Off 🔴
+                </motion.button>
+              </div>
+
+              {/* Natural Language & Voice Search Agent Bar */}
+              <div className="bg-white p-4 rounded-3xl border-3 border-emerald-200 shadow-md flex flex-col gap-3">
+                <div className="flex items-center gap-1.5 text-xs font-black uppercase text-emerald-800 tracking-wider">
+                  <Sparkles className="w-4 h-4 text-yellow-500" />
+                  <span>AI Natural Language Job Search</span>
+                </div>
+
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    handleRunAiSearch();
+                  }}
+                  className="flex items-center gap-2 bg-gray-100 border border-gray-300 rounded-2xl px-4 py-2 min-h-[52px]"
+                >
+                  <Search className="w-6 h-6 text-gray-400 shrink-0" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder='e.g. "work near me tomorrow, good pay" or "is this wage fair?"'
+                    className="w-full bg-transparent text-base font-bold text-gray-800 outline-none"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={handleClearSearch}
+                      className="text-gray-400 hover:text-gray-600 font-bold px-1"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </form>
+
+                <VoiceInputButton
+                  onSpeechResult={(spoken) => handleRunAiSearch(spoken)}
+                  label="Speak Request 🎙️"
+                  hint='Say: "work near me tomorrow, good pay" or "is ₹500 wage fair?"'
+                />
+              </div>
+
+              {/* ChromaDB Grounded RAG Labour Rights Card */}
+              <AnimatePresence>
+                {ragAnswer && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10, scale: 0.96 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.2 }}
+                    className="bg-gradient-to-br from-amber-50 to-yellow-50 rounded-3xl p-5 border-3 border-amber-300 shadow-lg flex flex-col gap-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-amber-900 font-black text-lg">
+                        <Scale className="w-6 h-6 text-amber-700" />
+                        <span>ChromaDB Labour Rights Check</span>
+                      </div>
+                      <span className="bg-amber-200 text-amber-950 font-black text-xs px-2.5 py-1 rounded-full">
+                        Grounded RAG
+                      </span>
+                    </div>
+
+                    <p className="text-base font-bold text-gray-900 whitespace-pre-line leading-relaxed">
+                      {ragAnswer.explanation}
+                    </p>
+
+                    {ragAnswer.groundedSources && (
+                      <div className="pt-1 border-t border-amber-200 text-xs font-bold text-amber-800 flex items-center gap-1.5">
+                        <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                        <span>Sources: {ragAnswer.groundedSources.join(' • ')}</span>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              {/* Top 3 Audio Voice Summary Banner */}
+              <AnimatePresence>
+                {aiVoiceSummary && !ragAnswer && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="bg-emerald-800 text-white rounded-3xl p-4 shadow-lg flex items-start gap-3 border-2 border-emerald-600"
+                  >
+                    <Volume2 className="w-6 h-6 text-yellow-300 shrink-0 mt-0.5 animate-pulse" />
+                    <div className="flex-1">
+                      <span className="text-xs font-black uppercase text-yellow-300 block mb-1">
+                        Ranked Job Summary
+                      </span>
+                      <p className="text-base font-bold whitespace-pre-line leading-relaxed">
+                        {aiVoiceSummary}
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="flex items-center justify-between pt-1">
+                <h3 className="text-xl sm:text-2xl font-black text-emerald-950 flex items-center gap-2">
+                  <span>🌾</span>
+                  <span>{t('laborer.find_work_title', 'Available Jobs')}</span>
+                </h3>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.92 }}
+                  onClick={fetchJobs}
+                  className="p-2.5 rounded-xl bg-white border border-gray-300 shadow-sm text-gray-700 hover:bg-gray-50"
+                  aria-label="Refresh Jobs"
+                >
+                  <RefreshCw className={`w-5 h-5 ${loading || searchLoading ? 'animate-spin' : ''}`} />
+                </motion.button>
+              </div>
+
+              {/* Animated Skeleton-to-Content Transition */}
+              <AnimatePresence mode="wait">
+                {loading || searchLoading ? (
+                  <motion.div
+                    key="skeletons"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.15 }}
+                    className="flex flex-col gap-4"
+                  >
+                    <JobCardSkeleton />
+                    <JobCardSkeleton />
+                  </motion.div>
+                ) : visibleJobs.length === 0 ? (
+                  <motion.div
+                    key="empty"
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: 0.18 }}
+                    className="bg-white rounded-3xl p-8 text-center border-2 border-dashed border-gray-300 shadow-sm flex flex-col items-center gap-2"
+                  >
+                    <span className="text-6xl mb-2">🔔</span>
+                    <h4 className="text-xl font-black text-gray-800">
+                      {t('laborer.no_jobs', 'No jobs matching right now')}
+                    </h4>
+                    <p className="text-sm font-bold text-gray-500">
+                      You will get an instant sound and alert when a farm owner posts work!
+                    </p>
+                    {searchQuery && (
+                      <button
+                        onClick={handleClearSearch}
+                        className="mt-2 text-emerald-700 font-bold underline"
+                      >
+                        Clear Search Filter
+                      </button>
+                    )}
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="jobs-list"
+                    variants={containerVariants}
+                    initial="hidden"
+                    animate="show"
+                    className="flex flex-col gap-4"
+                  >
+                    {visibleJobs.map((job) => (
+                      <LaborerJobCard
+                        key={job.id}
+                        job={job}
+                        onAccept={handleAcceptJob}
+                        onReject={handleRejectJob}
+                        isAccepted={acceptedJobIds.includes(job.id)}
+                        isFull={job.status === 'FULL'}
+                      />
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

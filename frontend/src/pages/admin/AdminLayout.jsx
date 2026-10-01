@@ -4,7 +4,7 @@ import { AuthContext } from '../../App';
 import { 
   LayoutDashboard, Users, UsersRound, Briefcase, 
   CalendarCheck, AlertTriangle, ScrollText, LogOut,
-  Settings as SettingsIcon, FileText, Bell
+  Settings as SettingsIcon, FileText, Bell, Bot
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import AdminUsers from './AdminUsers';
@@ -15,6 +15,7 @@ import AdminAuditLogs from './AdminAuditLogs';
 import AdminCMS from './AdminCMS';
 import AdminSettings from './AdminSettings';
 import AdminNotifications from './AdminNotifications';
+import AdminAgentQuery from './AdminAgentQuery';
 
 export default function AdminLayout() {
   const { setUser } = useContext(AuthContext);
@@ -28,6 +29,7 @@ export default function AdminLayout() {
 
   const navItems = [
     { path: '/admin', label: 'Dashboard', icon: <LayoutDashboard size={20} /> },
+    { path: '/admin/agent-query', label: 'AI Assistant', icon: <Bot size={20} />, highlight: true },
     { path: '/admin/users', label: 'All Users', icon: <Users size={20} /> },
     { path: '/admin/laborers', label: 'Laborers', icon: <UsersRound size={20} /> },
     { path: '/admin/hirers', label: 'Hirers', icon: <UsersRound size={20} /> },
@@ -54,11 +56,18 @@ export default function AdminLayout() {
                 <Link
                   to={item.path}
                   className={`flex items-center px-6 py-3 hover:bg-slate-800 transition-colors ${
-                    location.pathname === item.path ? 'bg-slate-800 border-l-4 border-green-500 text-green-400' : 'text-slate-300'
+                    location.pathname === item.path
+                      ? 'bg-slate-800 border-l-4 border-green-500 text-green-400'
+                      : item.highlight
+                        ? 'text-indigo-300 hover:text-indigo-200'
+                        : 'text-slate-300'
                   }`}
                 >
                   <span className="mr-3">{item.icon}</span>
                   {item.label}
+                  {item.highlight && location.pathname !== item.path && (
+                    <span className="ml-auto text-[10px] px-1.5 py-0.5 bg-indigo-600 text-white rounded-full font-bold">AI</span>
+                  )}
                 </Link>
               </li>
             ))}
@@ -85,6 +94,7 @@ export default function AdminLayout() {
         <div className="flex-1 overflow-auto p-6">
           <Routes>
             <Route path="/" element={<AdminDashboard />} />
+            <Route path="/agent-query" element={<AdminAgentQuery />} />
             <Route path="/users" element={<AdminUsers role="" />} />
             <Route path="/laborers" element={<AdminUsers role="laborer" />} />
             <Route path="/hirers" element={<AdminUsers role="farmowner" />} />

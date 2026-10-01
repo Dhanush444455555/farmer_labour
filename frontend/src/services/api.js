@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5001`;
+const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
 
 const getHeaders = (uid) => {
   const headers = { 'Content-Type': 'application/json' };
@@ -133,6 +133,34 @@ export const api = {
     if (!res.ok) {
       const err = await res.json();
       throw new Error(err.error || 'Failed to create work alert');
+    }
+    return await res.json();
+  },
+
+  // LangGraph Job Posting Agent Turn
+  runJobPostingAgent: async (uid, { message, language = 'en', reset = false, confirm = false }) => {
+    const res = await fetch(`${API_URL}/api/agent/job-post`, {
+      method: 'POST',
+      headers: getHeaders(uid),
+      body: JSON.stringify({ message, language, reset, confirm })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Agent turn failed');
+    }
+    return await res.json();
+  },
+
+  // LangGraph Job Search & ChromaDB RAG Agent
+  runJobSearchAgent: async (uid, { query, language = 'en' }) => {
+    const res = await fetch(`${API_URL}/api/agent/job-search`, {
+      method: 'POST',
+      headers: getHeaders(uid),
+      body: JSON.stringify({ query, language })
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Job search agent failed');
     }
     return await res.json();
   },
@@ -437,6 +465,16 @@ export const api = {
       });
       if (!res.ok) throw new Error('Failed to send notification');
       return await res.json();
+    },
+    agentQuery: async (uid, queryText) => {
+      const res = await fetch(`${API_URL}/api/admin/agent/query`, {
+        method: 'POST',
+        headers: getHeaders(uid),
+        body: JSON.stringify({ queryText })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Agent query failed');
+      return data;
     }
   }
 };

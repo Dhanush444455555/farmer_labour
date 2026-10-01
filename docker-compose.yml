@@ -1,17 +1,96 @@
-version: '3.8'
+# docker-compose.yml
+# Runs all three services for local development with one command:
+#   docker compose up
+#
+# Services:
+#   frontend      — Vite React dev server  (port 5173)
+#   backend       — Node.js Express + Socket.IO  (port 5000)
+#   agent-service — Python FastAPI + LangGraph   (port 8000)
+#
+# Shared volume:
+#   ./backend/farm_connect.sqlite is mounted into agent-service so both
+#   services read/write the SAME SQLite file.
+#   ./agent-service/rag/chroma_db is persisted as a named volume so
+#   ChromaDB data survives container restarts.
+#
+# Quick start:
+#   cp backend/.env.example backend/.env           # fill in SMTP / API keys
+#   cp agent-service/.env.example agent-service/.env
+#   docker compose up --build
+
+version: "3.9"
 
 services:
-  db:
-    image: postgres:15
-    restart: always
-    environment:
-      POSTGRES_USER: farmuser
-      POSTGRES_PASSWORD: farmpassword
-      POSTGRES_DB: farmlabor
+
+  # ── Frontend ──────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
     ports:
-      - "5432:5432"
+      - "5173:5173"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./frontend:/app
+      - /app/node_modules           # keep container node_modules separate
+    environment:
+      - VITE_API_URL=http://localhost:5000
+    depends_on:
+      - backend
+    networks:
+      - farm_net
+
+  # ── Node / Express backend ────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    environment:
+      PORT: 5000
+      NODE_ENV: development
+      AGENT_SERVICE_URL: http://agent-service:8000
+      # Copy remaining vars from backend/.env:
+    env_file:
+      - ./backend/.env
+    networks:
+      - farm_net
+
+  # ── Python agent-service (FastAPI + LangGraph) ────────────────────────────
+  agent-service:
+    build:
+      context: ./agent-service
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      # Share the same SQLite file the Node backend uses
+      - ./backend/farm_connect.sqlite:/app/data/farm_connect.sqlite:rw
+      # Persist ChromaDB to a named volume
+      - chroma_data:/app/rag/chroma_db
+    environment:
+      DB_DRIVER: sqlite
+      SQLITE_PATH: /app/data/farm_connect.sqlite
+      CHROMA_PATH: /app/rag/chroma_db
+      CHROMA_MODE: local
+      PORT: 8000
+    env_file:
+      - ./agent-service/.env
+    networks:
+      - farm_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+networks:
+  farm_net:
+    driver: bridge
 
 volumes:
-  pgdata:
+  chroma_data:
+    driver: local

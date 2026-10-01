@@ -8,6 +8,11 @@ const crypto = require('crypto');
 const { initDb, query, run, get, logAuditAction } = require('./db');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+const { runJobPostingAgentTurn } = require('./agent/jobPostingGraph');
+const { runJobSearchAgent } = require('./agent/jobSearchGraph');
+const { initChromaCollection } = require('./agent/chromaLabourRights');
+const { runAdminQueryAgent } = require('./agent/adminQueryGraph');
+const agentRouter = require('./routes/agent');
 
 const app = express();
 
@@ -15,6 +20,9 @@ const app = express();
 app.use(helmet());
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '10mb' }));
+
+// Python agent-service proxy (must come before the apiLimiter so it gets its own timeout)
+app.use('/api/agent', agentRouter);
 
 // Basic Rate Limiter
 const apiLimiter = rateLimit({
@@ -34,8 +42,9 @@ const io = new Server(server, {
   }
 });
 
-// Initialize Database
+// Initialize Database & Knowledge Collections
 initDb();
+initChromaCollection().catch(() => {});
 
 // Auth Middleware
 const requireAuth = async (req, res, next) => {
@@ -561,6 +570,64 @@ app.post('/api/jobs', requireAuth, async (req, res) => {
   } catch (err) {
     console.error('Error creating job:', err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /api/agent/job-post - LangGraph Conversational Job Posting Agent Turn
+app.post('/api/agent/job-post', requireAuth, async (req, res) => {
+  try {
+    const { message, language, reset, confirm } = req.body;
+    let inputMessage = message;
+    if (confirm) {
+      inputMessage = 'confirm';
+    }
+
+    const result = await runJobPostingAgentTurn({
+      uid: req.uid,
+      message: inputMessage,
+      language: language || 'en',
+      io,
+      createNotificationHelper,
+      reset: !!reset
+    });
+
+    res.json({
+      stage: result.stage,
+      botMessage: result.botMessage,
+      missingField: result.missingField,
+      confirmationSummary: result.confirmationSummary,
+      isSubmitted: result.isSubmitted,
+      createdJobId: result.createdJobId,
+      jobState: {
+        workType: result.workType,
+        laborersRequired: result.laborersRequired,
+        wage: result.wage,
+        location: result.location,
+        genderPreference: result.genderPreference,
+        workDate: result.workDate,
+        workTime: result.workTime
+      }
+    });
+  } catch (err) {
+    console.error('LangGraph Agent Error:', err);
+    res.status(500).json({ error: err.message || 'Agent failed to process turn' });
+  }
+});
+
+// POST /api/agent/job-search - LangGraph Job Search & ChromaDB RAG Agent
+app.post('/api/agent/job-search', requireAuth, async (req, res) => {
+  try {
+    const { query: queryText, language } = req.body;
+    const result = await runJobSearchAgent({
+      queryText: queryText || '',
+      uid: req.uid,
+      language: language || 'en'
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Job Search Agent Error:', err);
+    res.status(500).json({ error: err.message || 'Job search agent failed' });
   }
 });
 
@@ -1261,6 +1328,46 @@ app.post('/api/admin/notifications', requireAuth, requireAdmin, async (req, res)
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ==========================================
+// ADMIN LANGGRAPH AGENT QUERY ENDPOINT
+// ==========================================
+
+// POST /api/admin/agent/query
+// Accepts a natural language question from an admin and runs it through
+// the 3-node LangGraph chain: parse_query → route → summarize
+app.post('/api/admin/agent/query', requireAuth, requireAdmin, async (req, res) => {
+  const { queryText } = req.body;
+
+  if (!queryText || typeof queryText !== 'string' || queryText.trim().length < 3) {
+    return res.status(400).json({ error: 'Please provide a valid query (at least 3 characters).' });
+  }
+
+  try {
+    const result = await runAdminQueryAgent({
+      queryText: queryText.trim(),
+      adminUid: req.uid
+    });
+
+    // Audit log every agent query so admins have a trail
+    await logAuditAction(
+      req.uid,
+      'Admin Agent Query',
+      `[${result.category}] ${queryText.trim().slice(0, 80)}`,
+      { category: result.category, entities: result.extractedEntities }
+    );
+
+    res.json({
+      success: true,
+      category: result.category,
+      entities: result.extractedEntities,
+      answer: result.answer
+    });
+  } catch (err) {
+    console.error('[Admin Agent] Error:', err);
+    res.status(500).json({ error: 'Agent query failed. Please try again.' });
   }
 });
 

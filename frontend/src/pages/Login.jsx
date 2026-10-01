@@ -5,6 +5,7 @@ import { Phone, ArrowRight, Users, Tractor, User, MapPin, Navigation, Loader2 } 
 import { api } from '../services/api';
 import { joinUserRoom } from '../socket';
 import { useTranslation } from 'react-i18next';
+import PersistentLanguageSwitcher from '../components/common/PersistentLanguageSwitcher';
 
 export default function Login() {
   const { t, i18n } = useTranslation();
@@ -121,24 +122,11 @@ export default function Login() {
   }, [step]);
 
   return (
-    <div className="flex flex-col items-center justify-center flex-1 w-full space-y-6 animate-in fade-in zoom-in duration-500 py-6">
-      
-      {/* Language Switcher */}
-      <div className="absolute top-4 right-4 bg-white rounded-lg shadow-sm border border-gray-200 p-1 flex space-x-1 z-10">
-        {['en', 'hi', 'kn'].map((lang) => (
-          <button
-            key={lang}
-            onClick={() => i18n.changeLanguage(lang)}
-            className={`px-3 py-1.5 text-xs font-bold rounded-md transition-all ${
-              i18n.language === lang 
-                ? 'bg-green-600 text-white shadow-md' 
-                : 'bg-transparent text-gray-500 hover:bg-gray-100 hover:text-gray-800'
-            }`}
-          >
-            {lang === 'en' ? 'ENG' : lang === 'hi' ? 'हिंदी' : 'ಕನ್ನಡ'}
-          </button>
-        ))}
-      </div>
+    <div className="flex flex-col items-center justify-start flex-1 w-full min-h-screen">
+      {/* Persistent 56px Flag Language Switcher */}
+      <PersistentLanguageSwitcher />
+
+      <div className="flex flex-col items-center justify-center flex-1 w-full max-w-md space-y-6 animate-in fade-in zoom-in duration-500 py-6 px-4">
 
       {step === 'form' && (
         <div className="bg-white p-6 sm:p-8 rounded-2xl shadow-lg w-full text-center space-y-6">
@@ -303,6 +291,7 @@ export default function Login() {
         </div>
       )}
 
+      </div>
     </div>
   );
 }

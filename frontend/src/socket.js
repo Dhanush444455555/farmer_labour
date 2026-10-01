@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 
-const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5001`;
+const API_URL = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:5000`;
 
 export const socket = io(API_URL, {
   autoConnect: true,
